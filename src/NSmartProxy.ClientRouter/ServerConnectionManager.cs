@@ -11,6 +11,7 @@ using System.Threading;
 using NSmartProxy.Infrastructure;
 using NSmartProxy.Shared;
 using NSmartProxy.Authorize;
+using System.IO;
 
 namespace NSmartProxy.Client
 {
@@ -49,7 +50,17 @@ namespace NSmartProxy.Client
         public async Task<ClientModel> InitConfig(NSPClientConfig config)
         {
             ClientConfig = config;
-            ClientModel clientModel = await ReadConfigFromProvider();
+            ClientModel clientModel = null;
+            try
+            {
+                clientModel = await ReadConfigFromProvider();
+            }
+            catch (Exception ex) //如果这里出错，则自动删除缓存
+            {
+                ClearLoginCache();
+                Router.Logger.Debug("连接服务器失效，已清空登陆缓存");
+                throw ex;
+            }
 
             //要求服务端分配资源并获取服务端配置
             this._clientID = clientModel.ClientId;
@@ -141,7 +152,7 @@ namespace NSmartProxy.Client
             //TODO 任何read都应该设置超时
             int readBytesCount = await configStream.ReadAsync(serverConfig, 0, serverConfig.Length);
             if (readBytesCount == 0)
-                Router.Logger.Debug("服务器关闭了本次连接");
+                Router.Logger.Debug("服务器关闭了本次连接");//TODO 切换服务端时因为token的问题导致服务端无法使用
             else if (readBytesCount == -1)
                 Router.Logger.Debug("连接超时");
 
@@ -383,6 +394,11 @@ namespace NSmartProxy.Client
                 }
             }
 
+        }
+
+        public void ClearLoginCache()
+        {
+            File.Delete(Router.NspClientCachePath);
         }
 
 

@@ -43,7 +43,7 @@ namespace NSmartProxy.Client
 
     public class Router
     {
-        public static string NspClientCachePath = null;
+        private static string nspClientCachePath = null;
 
         public static string NSMART_CLIENT_CACHE_FILE = "cli_cache_v2.cache";
         CancellationTokenSource ONE_LIVE_TOKEN_SRC;
@@ -65,13 +65,25 @@ namespace NSmartProxy.Client
         internal static INSmartLogger Logger = new NullLogger();   //inject
         internal static Guid TimeStamp; //时间戳，用来标识对象是否已经发生变化
 
+        public static string NspClientCachePath
+        {
+            get
+            {
+                if (nspClientCachePath == null)
+                {
+                    string assemblyFilePath = Assembly.GetExecutingAssembly().Location;
+                    string assemblyDirPath = Path.GetDirectoryName(assemblyFilePath);
+                    NspClientCachePath = assemblyDirPath + "\\" + NSMART_CLIENT_CACHE_FILE;
+                }
+
+                return nspClientCachePath;
+            }
+            set => nspClientCachePath = value;
+        }
+
         public Router()
         {
             ONE_LIVE_TOKEN_SRC = new CancellationTokenSource();
-            //ClientDispatcher = new NSPDispatcher();
-            string assemblyFilePath = Assembly.GetExecutingAssembly().Location;
-            string assemblyDirPath = Path.GetDirectoryName(assemblyFilePath);
-            NspClientCachePath = assemblyDirPath + "\\" + NSMART_CLIENT_CACHE_FILE;
         }
 
         public Router(INSmartLogger logger) : this()
@@ -137,7 +149,7 @@ namespace NSmartProxy.Client
                 //0.5 处理登录/重登录/匿名登录逻辑
                 try
                 {
-                    //登录
+                    //显式登录
                     if (CurrentLoginInfo != null)
                     {
                         var loginResult = await Login();
@@ -145,16 +157,16 @@ namespace NSmartProxy.Client
                         clientId = loginResult.Item2;
                     }
                     else if (File.Exists(NspClientCachePath))
-                    { //登录缓存
-
+                    { 
+                        //登录缓存
                         arrangedToken = File.ReadAllText(NspClientCachePath);
-                        //TODO 这个token的合法性无法保证,如果服务端删除了用户，而这里缓存还存在，会导致无法登录
-                        //TODO ***** 这是个trick：防止匿名用户被服务端踢了之后无限申请新账号
-                        //TODO 待解决 版本号无法显示的问题
+                        //这个token的合法性无法保证,如果服务端删除了用户，而这里缓存还存在，会导致无法登录
+                        //服务端校验token失效之后会主动关闭连接
                         CurrentLoginInfo = null;
                     }
                     else
                     {
+                        //首次登录
                         //匿名登录，未提供登录信息时，使用空用户名密码自动注册并尝试匿名登录
                         Router.Logger.Debug("未提供登录信息，尝试匿名登录");
                         CurrentLoginInfo = new LoginInfo() { UserName = "", UserPwd = "" };
@@ -241,8 +253,6 @@ namespace NSmartProxy.Client
                     ConnectionManager.CloseAllConnections();//关闭所有连接
                 //出错重试
                 await Task.Delay(Global.ClientReconnectInterval, ONE_LIVE_TOKEN_SRC.Token);
-                //TODO 返回错误码
-                //await Task.Delay(TimeSpan.FromHours(24), CANCEL_TOKEN.CurrentToken).ConfigureAwait(false);
                 Router.Logger.Debug($"连接关闭，开启重试");
             }
             //正常终止
@@ -383,7 +393,6 @@ namespace NSmartProxy.Client
                 //每移除一个链接则发起一个新的链接
                 Router.Logger.Debug(appId + "接收到连接请求");
                 //根据clientid_appid发送到固定的端口
-                //TODO 序列没有匹配元素？
                 ClientApp item = ClientConfig.Clients.First((obj) => obj.AppId == appId);
 
                 //向服务端发起一次长连接，没有接收任何外来连接请求时，
@@ -406,13 +415,11 @@ namespace NSmartProxy.Client
                 //targetServerStream.Write(buffer, 0, readByteCount);
                 _ = TcpTransferAsync(providerClientStream, targetServerStream, providerClient, toTargetServer, epString);
                 //already close connection
-
             }
             catch (Exception ex)
             {
                 Logger.Debug("传输时出错：" + ex);
-                //关闭传输连接，服务端也会相应处理，把0request发送给消费端
-                //TODO ***: 连接时出错，重启客户端
+                //关闭传输连接
                 toTargetServer.Close();
                 providerClient.Close();
                 throw;
@@ -472,6 +479,7 @@ namespace NSmartProxy.Client
             tc.Connect("127.0.0.1", port);
             tc.Client.Send(new byte[] { 0x00 });
         }
+
     }
 
 }
