@@ -18,10 +18,12 @@ using System.Windows.Forms;
 using log4net.Appender;
 using log4net.Repository;
 using Newtonsoft.Json;
+using NSmartProxy.Client.Authorize;
 using NSmartProxy.Infrastructure;
 using NSmartProxy.Shared;
 using NSmartProxyWinform.Util;
 using NSmartProxy.ClientRouter.Dispatchers;
+using NSmartProxy.Data.Models;
 using static NSmartProxy.Infrastructure.I18N;
 
 namespace NSmartProxyWinform
@@ -43,7 +45,7 @@ namespace NSmartProxyWinform
         {
             get
             {
-                return WinServiceHelper.IsServiceExisted(Global.ServiceName);
+                return WinServiceHelper.IsServiceExisted(Global.NSPClientServiceName);
             }
         }
 
@@ -60,24 +62,21 @@ namespace NSmartProxyWinform
             logger.BeforeWriteLog = (msg) => { ShowLogInfo(msg.ToString()); };
             //右下角小图标
             notifyIconNSPClient.Icon = Properties.Resources.servicestopped;
-            RefreshLoginState();
-
 
             //界面的一些细节初始化
             btnLogin.Location = new Point(12, btnLogin.Location.Y);
             btnOpenInExplorer.Hide();
 
-            //有登录缓存文件，则判断为“已登录”
-            if (File.Exists(Router.NspClientCachePath)) btnLogin.Text = " 已登录";
 
-            this.notifyIconNSPClient.Text = Global.NSmartProxyClientName;
+
+            this.notifyIconNSPClient.Text = NSPVersion.NSmartProxyClientName;
 
             UpdateText();
         }
 
         private void UpdateText()
         {
-            this.notifyIconNSPClient.Text = Global.NSmartProxyClientName;
+            this.notifyIconNSPClient.Text = NSPVersion.NSmartProxyClientName;
             btnStart.Text = L("开始");
             btnOpenInExplorer.Text = L("资源管理器中打开");
             启动内网穿透ToolStripMenuItem.Text = L("启动内网穿透");
@@ -108,20 +107,25 @@ namespace NSmartProxyWinform
             Text = L("配置对话框");
         }
 
-        private void RefreshLoginState()
-        {
-            if (File.Exists(Router.NspClientCachePath))
-            {
-                btnLogin.Image = Properties.Resources.logined;
-            }
-            else
-            {
-                btnLogin.Image = Properties.Resources.unlogin;
-            }
-        }
+        //private void RefreshLoginState()
+        //{
+        //    string endpoint = tbxProviderAddr.Text + ":" + tbxWebPort;
+        //    ClientUserCacheItem cacheItem = UserCacheManager.GetUserCacheFromEndpoint(endpoint, Router.NspClientCachePath);
+        //    if (cacheItem != null)
+        //    {//TODO 3 显示出用户名
+        //        btnLogin.Image = Properties.Resources.logined;
+        //    }
+        //    else
+        //    {
+        //        btnLogin.Image = Properties.Resources.unlogin;
+        //    }
+        //}
 
         private void btnStart_Click(object sender, EventArgs e)
         {
+            RefreshLoginBtnState();
+            //RefreshLoginState();
+
             if (ValidateConfig() && SaveFormDataToConfigFile())
             {
                 StartOrStop();
@@ -183,7 +187,7 @@ namespace NSmartProxyWinform
             {
                 if (isService)
                 {
-                    using (ServiceController control = new ServiceController(Global.ServiceName))
+                    using (ServiceController control = new ServiceController(Global.NSPClientServiceName))
                     {
                         if (control.Status == ServiceControllerStatus.Stopped)
                         {
@@ -205,11 +209,19 @@ namespace NSmartProxyWinform
                                 {
                                     notifyIconNSPClient.BalloonTipText = L("内网穿透已启动");
                                     listBox1.ForeColor = Color.Green;
-                                    listBox1.Items.Clear();
+                                    foreach (ListViewItem item in listBox1.Items)
+                                    {
+                                        item.ImageKey = "run";
+                                    }
+
+                                    //listBox1.Items.Clear();//TODO 3 这里会导致tag丢失
+                                    //这里需要保证顺序
+                                    int ii = 0;
                                     foreach (var tunnel in tunelStr)
                                     {
                                         notifyIconNSPClient.BalloonTipText += "\r\n" + tunnel.ToString();
-                                        listBox1.Items.Add(tunnel.Substring(tunnel.IndexOf(':') + 1).Trim());
+                                        listBox1.Items[ii].Text = tunnel.Substring(tunnel.IndexOf(':') + 1).Trim();
+                                        ii++;
                                     }
                                     notifyIconNSPClient.ShowBalloonTip(5000);
                                     SetUIToRunning();
@@ -236,7 +248,7 @@ namespace NSmartProxyWinform
             {
                 if (isService)
                 {
-                    using (ServiceController control = new ServiceController(Global.ServiceName))
+                    using (ServiceController control = new ServiceController(Global.NSPClientServiceName))
                     {
                         control.Stop();
                     }
@@ -250,7 +262,11 @@ namespace NSmartProxyWinform
                         () =>
                         {
                             if (t.IsFaulted) { logger.Error(L("客户端关闭失败"), null); btnStart.Enabled = true; return; }
-                            listBox1.ForeColor = Color.Black;
+                            //listBox1.ForeColor = Color.Black;
+                            foreach (ListViewItem item in listBox1.Items)
+                            {
+                                item.ImageKey = "stop";
+                            }
                             SetUIToStop();
                         }
                     )));
@@ -281,7 +297,7 @@ namespace NSmartProxyWinform
             btnStart.Enabled = false;
             btnStart.Invoke(new Action(() =>
             {
-                ServiceController control = new ServiceController(Global.ServiceName);
+                ServiceController control = new ServiceController(Global.NSPClientServiceName);
 
                 Task tskRunning = Task.Run(() => { try { control.WaitForStatus(ServiceControllerStatus.Running, new TimeSpan(0, 0, 4)); } catch { } });
                 Task tskStopping = Task.Run(() => { try { control.WaitForStatus(ServiceControllerStatus.Stopped, new TimeSpan(0, 0, 4)); } catch { } });
@@ -291,7 +307,7 @@ namespace NSmartProxyWinform
                 resultTsk.Wait();
                 if (tskRunning.IsCompleted)
                 {
-                    string tip = $"内网穿透后台服务({Global.ServiceName})已启动，详情请查看文件日志";
+                    string tip = $"内网穿透后台服务({Global.NSPClientServiceName})已启动，详情请查看文件日志";
                     SetUIToRunning();
                     notifyIconNSPClient.BalloonTipText = tip;
                     ShowLogInfo(tip);
@@ -299,7 +315,7 @@ namespace NSmartProxyWinform
                 else if (tskStopping.IsCompleted)
                 {
                     SetUIToStop();
-                    ShowLogInfo($"内网穿透后台服务({Global.ServiceName})已激活，但处于关闭状态。");
+                    ShowLogInfo($"内网穿透后台服务({Global.NSPClientServiceName})已激活，但处于关闭状态。");
                 }
                 else
                 {
@@ -317,10 +333,8 @@ namespace NSmartProxyWinform
         private void StartClientRouter(NSPClientConfig config, Action<ClientStatus, List<string>> loaded)
         {
             clientRouter = new Router(logger);
-            //TaskScheduler.UnobservedTaskException +=
-            //    (_, ev) => logger.Error(ev.Exception.Message, ev.Exception);
             //read config from config file.
-            SetConfig(clientRouter, config);// clientRouter.SetConifiguration();
+            SetConfig(clientRouter, config);
             clientRouter.StatusChanged = loaded;
             var tsk = clientRouter.Start();
             tsk.ConfigureAwait(false);//异步会导致无法抛出错误,同步又会导致锁死，必须再invoke一次？
@@ -391,29 +405,60 @@ namespace NSmartProxyWinform
 
         private void listBox1_SelectedIndexChanged(object sender, EventArgs e)
         {
-            if (listBox1.SelectedItem?.ToString() == NULL_CLIENT_TEXT)
+            #region 解决listview失去焦点高亮问题
+            this.listBox1.Items.Cast<ListViewItem>()
+                .ToList().ForEach(item =>
+                {
+                    item.BackColor = SystemColors.Window;
+                    item.ForeColor = SystemColors.WindowText;
+                });
+            this.listBox1.SelectedItems.Cast<ListViewItem>()
+                .ToList().ForEach(item =>
+                {
+                    item.BackColor = SystemColors.Highlight;
+                    item.ForeColor = SystemColors.HighlightText;
+                });
+            #endregion
+
+
+            if (listBox1.SelectedItems.Count > 0 && listBox1.SelectedItems[0].Text == NULL_CLIENT_TEXT)
             {
                 tbxPort.Clear();
                 tbxTargetServerAddr.Clear();
                 tbxTargetServerPort.Clear();
+                tbxHost.Clear();
+                tbxDescription.Clear();
+                //TODO 3 清空文本
             }
             else//节点配置显示
-            if (listBox1.SelectedItem != null)
+            if (listBox1.SelectedItems.Count > 0)
             {
-                var strSelectedItemStr = listBox1.SelectedItem.ToString();
-                var strParts = strSelectedItemStr.Split(new string[]
+                //var strSelectedItemStr = listBox1.SelectedItems[0].Text;
+                //var strParts = strSelectedItemStr.Split(new string[]
+                //{
+                //    "=>", ":"
+                //}, StringSplitOptions.None);
+                //if (strParts.Length != 4)
+                //{
+                //    MessageBox.Show(L("非法选择项"));
+                //    return;
+                //}
+
+                //tbxPort.Text = strParts[1].Trim();
+                //tbxTargetServerAddr.Text = strParts[2].Trim();
+                //tbxTargetServerPort.Text = strParts[3].Trim();
+                ClientApp app = listBox1.SelectedItems[0].Tag as ClientApp;
+                if (app == null)
                 {
-                    "=>", ":"
-                }, StringSplitOptions.None);
-                if (strParts.Length != 4)
-                {
-                    MessageBox.Show(L("非法选择项"));
+                    MessageBox.Show("节点数据丢失！");
                     return;
                 }
-
-                tbxPort.Text = strParts[1].Trim();
-                tbxTargetServerAddr.Text = strParts[2].Trim();
-                tbxTargetServerPort.Text = strParts[3].Trim();
+                tbxPort.Text = app.ConsumerPort.ToString();
+                tbxTargetServerAddr.Text = app.IP;//  strParts[2].Trim();
+                tbxTargetServerPort.Text = app.TargetServicePort.ToString(); //strParts[3].Trim();
+                tbxHost.Text = app.Host;
+                tbxDescription.Text = app.Description;
+                cbxProtocol.SelectedValue = Enum.GetName(typeof(Protocol), app.Protocol);
             }
         }
 
@@ -437,48 +482,95 @@ namespace NSmartProxyWinform
 
         private void btnAddClient_Click(object sender, EventArgs e)
         {
-            int index = listBox1.Items.Add(NULL_CLIENT_TEXT);
-            listBox1.SelectedIndex = index;
+            var item = listBox1.Items.Add(NULL_CLIENT_TEXT);
+            //listBox1.SelectedIndex = index;
+            item.Selected = true;
         }
 
 
 
         private void targetServer_TextChanged(object sender, EventArgs e)
         {
+            //刷新listview里的tag对象
+            if (listBox1.SelectedItems.Count > 0)
+            {
+                listBox1.SelectedItems[0].Tag = CurrentAppInForm();
+            }
+
             printTextToList();
         }
 
         private void printTextToList()
         {
-            if (listBox1.SelectedItem != null)
+            if (listBox1.SelectedItems.Count > 0)
             {
-                int originIndex = listBox1.SelectedIndex;
+                int originIndex = listBox1.SelectedItems[0].Index;
+                var selectedItem = listBox1.SelectedItems[0];
                 if (tbxPort.Text.Trim() == "") tbxPort.Text = "0";
-                listBox1.Items.Remove(listBox1.SelectedItem);
-
-                listBox1.Items.Insert(originIndex,
-                    $@"{tbxProviderAddr.Text}:{tbxPort.Text}  => {tbxTargetServerAddr.Text}:{tbxTargetServerPort.Text}");
-                listBox1.SelectedIndex = originIndex;
+                //listBox1.Items.Remove(preRemovedItem);
+                //ListViewItem listViewItem = listBox1.Items.Insert(originIndex, preRemovedItem);
+                selectedItem.Text =
+                    $@"{tbxProviderAddr.Text}:{tbxPort.Text}  => {tbxTargetServerAddr.Text}:{tbxTargetServerPort.Text}";
+                //listBox1.Items[originIndex].Selected = true;
             }
 
             //configChanged = true;
         }
 
+        private ClientApp CurrentAppInForm()
+        {
+            ClientApp app = new ClientApp();
+            app.Protocol = (Protocol)Enum.Parse(typeof(Protocol), cbxProtocol.Text);
+            if (tbxTargetServerAddr.Text != "")
+            {
+                app.IP = tbxTargetServerAddr.Text;
+            }
+
+            if (tbxTargetServerPort.Text != "")
+            {
+                app.TargetServicePort = int.Parse(tbxTargetServerPort.Text);
+            }
+
+            if (tbxPort.Text != "")
+            {
+                app.ConsumerPort = int.Parse(tbxPort.Text);
+            }
+
+            app.Host = tbxHost.Text;
+            app.Description = tbxDescription.Text;
+            return app;
+        }
+
         private void btnDelete_Click(object sender, EventArgs e)
         {
-            int originIndex = listBox1.SelectedIndex;
-            listBox1.Items.Remove(listBox1.SelectedItem);
-            if (originIndex < listBox1.Items.Count)
-                listBox1.SelectedIndex = originIndex;
+            if (listBox1.SelectedItems.Count == 0) return;
+            int originIndex = listBox1.SelectedItems[0].Index;
+            //int willingSelectIndex = -1;
+            listBox1.Items.Remove(listBox1.SelectedItems[0]);
+            if (listBox1.Items.Count > 0)
+            {
+                if (originIndex == listBox1.Items.Count) //如果元素后面没有元素，则选中上一个元素
+                {
+                    listBox1.Items[listBox1.Items.Count - 1].Selected = true;
+                }
+                else
+                {
+                    listBox1.Items[originIndex].Selected = true;
+                }
+            }
+
+
+            //if (originIndex < listBox1.Items.Count && originIndex > 0)
+
             //configChanged = true;
         }
 
         private void btnDuplicate_Click(object sender, EventArgs e)
         {
-            if (listBox1.SelectedItem != null)
+            if (listBox1.SelectedItems.Count > 0)
             {
-                listBox1.SelectedIndex =
-                    listBox1.Items.Add(listBox1.SelectedItem.ToString());
+                //listBox1.SelectedIndex =
+                listBox1.Items.Add(listBox1.SelectedItems[0].Text).Selected = true;
             }
         }
 
@@ -523,15 +615,15 @@ namespace NSmartProxyWinform
         {
             NSPClientConfig conf = ConfigHelper.ReadAllConfig<NSPClientConfig>(Program.CONFIG_FILE_PATH);
             tbxProviderAddr.Text = conf.ProviderAddress;
-            //tbxConfigPort.Text = conf.ProviderConfigPort.ToString();
             tbxWebPort.Text = conf.ProviderWebPort.ToString();
-            //if(tbxReversePort.Text == "" ? tbxReversePort.Text = "0";
 
             listBox1.Items.Clear();
             foreach (var confClient in conf.Clients)
             {
-                listBox1.Items.Add(
+                ListViewItem listViewItem = listBox1.Items.Add(
                     $@"{tbxProviderAddr.Text}:{confClient.ConsumerPort}  => {confClient.IP}:{confClient.TargetServicePort}");
+                listViewItem.Tag = confClient;
+                listViewItem.ImageKey = "stop";
             }
         }
 
@@ -550,15 +642,13 @@ namespace NSmartProxyWinform
             config = new NSPClientConfig();
             //1.刷新配置
             config.ProviderAddress = tbxProviderAddr.Text;
-            //config.ProviderConfigPort = int.Parse(tbxConfigPort.Text);
-            //config.ProviderPort = int.Parse(tbxReversePort.Text);
             config.ProviderWebPort = int.Parse(tbxWebPort.Text);
             //解决热心网友提出的bug：空值时无法保存。
 
             //2.保存配置到文件
-            foreach (var item in listBox1.Items)
+            foreach (ListViewItem item in listBox1.Items)
             {
-                var strParts = item.ToString().Split(new string[]
+                var strParts = item.Text.Split(new string[]
                 {
                     "=>", ":"
                 }, StringSplitOptions.None);
@@ -573,12 +663,7 @@ namespace NSmartProxyWinform
                 try
                 {
 
-                    config.Clients.Add(new ClientApp
-                    {
-                        ConsumerPort = Convert.ToInt32(strParts[1]),
-                        IP = strParts[2].Trim(),
-                        TargetServicePort = Convert.ToInt32(strParts[3])
-                    });
+                    config.Clients.Add((ClientApp)item.Tag);
                 }
                 catch
                 {
@@ -595,12 +680,60 @@ namespace NSmartProxyWinform
             RefreshFormFromConfig();
             RegisterHotKey();
             RefreshWinServiceState();
+            BindDDL();
+            RefreshLoginBtnState();
+        }
 
+        private void RefreshLoginBtnState()
+        {
+            //TODO 3 有登录缓存文件，则判断为“已登录”，需要修改
+            var userCacheItem = UserCacheManager.GetUserCacheFromEndpoint(GetEndPoint(), Router.NspClientCachePath);
+            if (userCacheItem != null)
+            {
+                btnLogin.Image = Properties.Resources.logined;
+                btnLogin.Text = " ";
+                if (userCacheItem.UserName == "")
+                {
+                    btnLogin.Text += "匿名登录";
+                }
+                else
+                {
+                    btnLogin.Text += userCacheItem.UserName;
+                }
+            }
+            else
+            {
+                btnLogin.Image = Properties.Resources.unlogin;
+            }
+        }
+
+        private void BindDDL()
+        {
+            DataTable dt = new DataTable();
+            dt.Columns.Add("id");
+            dt.Columns.Add("value");
+            dt.Rows.Add("HTTP", "HTTP");
+            dt.Rows.Add("TCP", "TCP");
+            cbxProtocol.Items.Clear();
+            cbxProtocol.ValueMember = "id";
+            cbxProtocol.ValueMember = "value";
+            cbxProtocol.DataSource = dt;
+            //    .Cast<Enum>()
+            //    .Select(value => new
+            //    {
+            //        //(Attribute.GetCustomAttribute(value.GetType().GetField(value.ToString()), typeof(DescriptionAttribute)) as DescriptionAttribute).Description,
+            //       // Enum.GetName(typeof(Protocol), value),
+            //        value
+            //    })
+            //    .OrderBy(item => item.value)
+            //    .ToList();
+            cbxProtocol.DisplayMember = "value";
+            cbxProtocol.ValueMember = "id";
         }
 
         private void RefreshWinServiceState()
         {
-            if (WinServiceHelper.IsServiceExisted(Global.ServiceName))
+            if (WinServiceHelper.IsServiceExisted(Global.NSPClientServiceName))
             {
                 btnRegWinSrv.Enabled = false;
                 btnUnRegWinSrv.Enabled = true;
@@ -621,6 +754,10 @@ namespace NSmartProxyWinform
 
         protected override void WndProc(ref Message m)
         {
+            const int WM_SYSCOMMAND = 0x112;
+            //const int SC_CLOSE = 0xF060;
+            const int SC_MINIMIZE = 0xF020;
+            //const int SC_MAXIMIZE = 0xF030;
             const int WM_HOTKEY = 0x0312;
             //按快捷键    
             switch (m.Msg)
@@ -644,17 +781,45 @@ namespace NSmartProxyWinform
 
                     }
                     break;
+                case WM_SYSCOMMAND: //防止最小化跑到右下角
+                    if (m.WParam.ToInt32() == SC_MINIMIZE)
+                    {
+                        this.Visible = false;
+                        return;
+                    }
+                    break;
             }
             base.WndProc(ref m);
         }
 
         private void btnLogin_Click(object sender, EventArgs e)
         {
+            if (tbxProviderAddr.Text.Trim() == "" || tbxWebPort.Text.Trim() == "")
+            {
+                string msg = L("请将外网服务器地址和端口填写完整");
+                MessageBox.Show(msg);
+                errorProvider1.SetError(tbxProviderAddr, msg);
+                errorProvider1.SetError(tbxWebPort, msg);
+                return;
+
+            }
+
             Login frmLogin = new Login(clientRouter, this);
             frmLogin.StartPosition = FormStartPosition.CenterScreen;
             frmLogin.ShowDialog();
-            if (frmLogin.Success) btnLogin.Text = L("已登录");
+            if (frmLogin.Success)
+            {
+                if (frmLogin.Username.Trim() == "")
+                {
+                    btnLogin.Text = "匿名登录";
+                }
+                else
+                {
+                    btnLogin.Text = frmLogin.Username;
+                }
+            }
         }
+
 
         //日志
         private void tabPage2_Enter(object sender, EventArgs e)
@@ -676,7 +841,7 @@ namespace NSmartProxyWinform
 
         private void btnRegWinSrv_Click(object sender, EventArgs e)
         {
-            if (WinServiceHelper.IsServiceExisted(Global.ServiceName))
+            if (WinServiceHelper.IsServiceExisted(Global.NSPClientServiceName))
                 WinServiceHelper.UninstallService(SERVICE_PATH);
             WinServiceHelper.InstallService(SERVICE_PATH);
             //using (ServiceController control = new ServiceController(Global.ServiceName))
@@ -691,7 +856,7 @@ namespace NSmartProxyWinform
 
         private void btnUnRegWinSrv_Click(object sender, EventArgs e)
         {
-            if (WinServiceHelper.IsServiceExisted(Global.ServiceName))
+            if (WinServiceHelper.IsServiceExisted(Global.NSPClientServiceName))
                 WinServiceHelper.UninstallService(SERVICE_PATH);
             RefreshWinServiceState();
         }
@@ -757,5 +922,12 @@ namespace NSmartProxyWinform
             //taskwhenall
             btnTest.Enabled = true;
         }
+
+        public string GetEndPoint()
+        {
+            return tbxProviderAddr.Text + ":" +
+                   tbxWebPort.Text; //ClientConfig.ProviderAddress + ":" + ClientConfig.ProviderWebPort;
+        }
+
     }
 }

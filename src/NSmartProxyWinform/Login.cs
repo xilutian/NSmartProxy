@@ -9,7 +9,9 @@ using System.Text;
 using System.Threading.Tasks;
 using System.Windows.Forms;
 using NSmartProxy.Client;
+using NSmartProxy.Client.Authorize;
 using NSmartProxy.ClientRouter.Dispatchers;
+using NSmartProxy.Data.Models;
 using NSmartProxy.Shared;
 using static NSmartProxy.Infrastructure.I18N;
 
@@ -20,7 +22,7 @@ namespace NSmartProxyWinform
         private Router clientRouter;
         private ClientMngr parentForm;
         public bool Success = false;
-
+        public string Username = "";
         public const int DEFAULT_WEB_PORT = 12309; //如果没有配置，则使用此默认端口
         public Login(Router router, ClientMngr frm)
         {
@@ -52,6 +54,7 @@ namespace NSmartProxyWinform
             {
                 ClearLoginCache();
                 this.Close();
+                Success = true;
                 return;
             }
 
@@ -69,12 +72,17 @@ namespace NSmartProxyWinform
             if (clientRouter == null)
             {
                 var providerAddr = parentForm.tbxProviderAddr.Text;
+                var providerport = parentForm.tbxWebPort.Text;
                 if (string.IsNullOrEmpty(providerAddr))
                 {
                     MessageBox.Show(L("请先在主窗体设置“服务器地址”"));
                 }
+                if (string.IsNullOrEmpty(providerport))
+                {
+                    MessageBox.Show(L("请先在主窗体设置外网服务器的“端口”字段"));
+                }
 
-                baseEndPoint = $"{providerAddr}:{DEFAULT_WEB_PORT}";
+                baseEndPoint = $"{providerAddr}:{providerport}";
             }
             else
             {
@@ -103,8 +111,9 @@ namespace NSmartProxyWinform
             {
                 MessageBox.Show(L("登录成功"));
 
-                CreateLoginCache(connectAsync.Result.Data.Token);
+                CreateLoginCache(tbxUser.Text, connectAsync.Result.Data.Token);
                 Success = true;
+                Username = tbxUser.Text;
                 this.Close();
             }
             btnLogin.Enabled = true;
@@ -113,12 +122,28 @@ namespace NSmartProxyWinform
 
         public void ClearLoginCache()
         {
-            File.Delete(Router.NspClientCachePath);
+            var clientUserCache = UserCacheManager.GetClientUserCache(Router.NspClientCachePath);
+            clientUserCache.Remove(parentForm.GetEndPoint());
+            UserCacheManager.SaveChanges(Router.NspClientCachePath, clientUserCache);
         }
 
-        public void CreateLoginCache(string token)
+        public void CreateLoginCache(string username, string token)
         {
-            File.WriteAllText(Router.NspClientCachePath, token);
+            var clientUserCache = UserCacheManager.GetClientUserCache(Router.NspClientCachePath);
+            var item = new ClientUserCacheItem()
+            {
+                UserName = username,
+                Token = token
+            };
+            clientUserCache[parentForm.GetEndPoint()] = item;
+            UserCacheManager.SaveChanges(Router.NspClientCachePath, clientUserCache);
+
         }
+
+        //public string GetEndPoint()
+        //{
+        //    return parentForm.tbxProviderAddr + ":" +
+        //           parentForm.tbxWebPort; //ClientConfig.ProviderAddress + ":" + ClientConfig.ProviderWebPort;
+        //}
     }
 }

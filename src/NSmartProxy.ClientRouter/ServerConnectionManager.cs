@@ -12,6 +12,7 @@ using NSmartProxy.Infrastructure;
 using NSmartProxy.Shared;
 using NSmartProxy.Authorize;
 using System.IO;
+using NSmartProxy.Client.Authorize;
 
 namespace NSmartProxy.Client
 {
@@ -57,8 +58,8 @@ namespace NSmartProxy.Client
             }
             catch (Exception ex) //如果这里出错，则自动删除缓存
             {
-                ClearLoginCache();
-                Router.Logger.Debug("连接服务器失效，已清空登陆缓存");
+                //TODO 2 判断服务端返回错误类型，如果是校验错误，则清空缓存
+
                 throw ex;
             }
 
@@ -80,7 +81,7 @@ namespace NSmartProxy.Client
         }
 
         /// <summary>
-        /// 从服务端读取配置
+        /// 从服务端读取配置，N问一答模式
         /// </summary>
         /// <returns></returns>
         private async Task<ClientModel> ReadConfigFromProvider()
@@ -119,8 +120,8 @@ namespace NSmartProxy.Client
 
             //请求0 协议名
             byte requestByte0;
-            if (isReconn) requestByte0 = (byte)Protocol.Reconnect;//重连则发送重连协议
-            else requestByte0 = (byte)Protocol.ClientNewAppRequest;
+            if (isReconn) requestByte0 = (byte)ServerProtocol.Reconnect;//重连则发送重连协议
+            else requestByte0 = (byte)ServerProtocol.ClientNewAppRequest;
 
             await configStream.WriteAsync(new byte[] { requestByte0 }, 0, 1);
 
@@ -131,17 +132,29 @@ namespace NSmartProxy.Client
                 Token = CurrentToken,
                 ClientId = this.ClientID,
                 ClientCount = config.Clients.Count//(obj => obj.AppId == 0) //appid为0的则是未分配的 <- 取消这条规则，总是重新分配
+                //Description = config.Description
             }.ToBytes();
             await configStream.WriteAsync(requestBytes, 0, requestBytes.Length);
 
             //请求2 分配端口
-            byte[] requestBytes2 = new byte[config.Clients.Count * 2];
+            //httpsupport: 增加host支持
+            int oneEndpointLength = 2 + 1 + 1024 + 96;//TODO 2 临时写的，这段需要重构
+            byte[] requestBytes2 = new byte[config.Clients.Count * (oneEndpointLength)];
             int i = 0;
             foreach (var client in config.Clients)
             {
                 byte[] portBytes = StringUtil.IntTo2Bytes(client.ConsumerPort);
-                requestBytes2[2 * i] = portBytes[0];
-                requestBytes2[2 * i + 1] = portBytes[1];
+                int offSetPos = oneEndpointLength * i;
+                requestBytes2[offSetPos] = portBytes[0];        //端口
+                requestBytes2[offSetPos + 1] = portBytes[1];    //端口
+                requestBytes2[offSetPos + 2] = (byte)client.Protocol;//协议
+                if (client.Host != null)                        //主机名
+                    Encoding.ASCII.GetBytes(client.Host, 0, client.Host.Length, requestBytes2, offSetPos + 3);
+                if (client.Description != null)
+                {
+                    Encoding.UTF8.GetBytes(client.Description, 0, client.Description.Length, requestBytes2, offSetPos + 3 + 1024);
+                }
+
                 i++;
             }
             await configStream.WriteAndFlushAsync(requestBytes2, 0, requestBytes2.Length);
@@ -149,12 +162,34 @@ namespace NSmartProxy.Client
             //读端口配置，此处数组的长度会限制使用的节点数（targetserver）
             //如果您的机器够给力，可以调高此值
             byte[] serverConfig = new byte[256];
+
             //TODO 任何read都应该设置超时
             int readBytesCount = await configStream.ReadAsync(serverConfig, 0, serverConfig.Length);
             if (readBytesCount == 0)
                 Router.Logger.Debug("服务器关闭了本次连接");//TODO 切换服务端时因为token的问题导致服务端无法使用
             else if (readBytesCount == -1)
                 Router.Logger.Debug("连接超时");
+            else if (readBytesCount == 1)
+            {
+                ServerStatus status = (ServerStatus)serverConfig[0];
+                if (status == ServerStatus.AuthFailed)
+                {
+                    //验证失败，则删除当前服务器的缓存token
+                    ClearLoginCache();
+                    Router.Logger.Debug("校验失效，已清空登录缓存");
+                    throw new Exception("校验失败");
+                }
+                else if (status == ServerStatus.UserBanned)
+                {
+                    Router.Logger.Debug("该用户被禁用");
+                    throw new Exception("该用户被禁用");
+                }
+                else
+                {
+                    Router.Logger.Debug("服务端未知异常");
+                    throw new Exception("服务端未知异常");
+                }
+            }
 
             return ClientModel.GetFromBytes(serverConfig, readBytesCount);
         }
@@ -233,7 +268,7 @@ namespace NSmartProxy.Client
             //统一管理连接
             ConnectedConnections.AddRange(clientList);
 
-            //事件循环1,这个方法必须放在最后
+            //事件循环1,这个方法必须放在最后 TODO 改为复数client，优化http请求
             ClientGroupConnected(this, new ClientGroupEventArgs()
             {
                 NewClients = clientList,
@@ -334,7 +369,7 @@ namespace NSmartProxy.Client
                     try
                     {
                         client = await NetworkUtil.ConnectAndSend(config.ProviderAddress,
-                            config.ConfigPort, Protocol.Heartbeat, StringUtil.IntTo2Bytes(this.ClientID));
+                            config.ConfigPort, ServerProtocol.Heartbeat, StringUtil.IntTo2Bytes(this.ClientID));
                     }
                     catch (Exception ex)
                     {
@@ -396,9 +431,18 @@ namespace NSmartProxy.Client
 
         }
 
+        //TODO 3 清除特定的登录缓存
         public void ClearLoginCache()
         {
-            File.Delete(Router.NspClientCachePath);
+            //File.Delete(Router.NspClientCachePath);
+            var clientUserCache = UserCacheManager.GetClientUserCache(Router.NspClientCachePath);
+            clientUserCache.Remove(GetEndPoint());
+            UserCacheManager.SaveChanges(Router.NspClientCachePath, clientUserCache);
+        }
+
+        public string GetEndPoint()
+        {
+            return ClientConfig.ProviderAddress + ":" + ClientConfig.ProviderWebPort;
         }
 
 

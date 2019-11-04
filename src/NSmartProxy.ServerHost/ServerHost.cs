@@ -11,13 +11,16 @@ using System.Threading;
 using NSmartProxy.Data.Config;
 using NSmartProxy.Infrastructure;
 using NSmartProxy.Shared;
+using PeterKottas.DotNetCore.WindowsService.Interfaces;
 
 namespace NSmartProxy.ServerHost
 {
-    class ServerHost
+    public class ServerHost:IMicroService
     {
 
         private static Mutex mutex = new Mutex(true, "{8639B0AD-A27C-4F15-B3D9-08035D0FC6D6}");
+        private static ILog Logger;
+
         #region logger
         public class Log4netLogger : INSmartLogger
         {
@@ -40,52 +43,44 @@ namespace NSmartProxy.ServerHost
         }
         #endregion
 
-        public static IConfigurationRoot Configuration { get; set; }
-        public static ILog Logger;
+        public IConfigurationRoot Configuration { get; set; }
 
         public const string CONFIG_FILE_PATH = "./appsettings.json";
-        static void Main(string[] args)
+
+        public void Start()
         {
             if (!mutex.WaitOne(3, false))
             {
+                //如果启动多个实例，则警告
                 string msg = "Another instance of the program is running.It may cause fatal error.";
-                //Logger.Error(msg, new Exception(msg));
                 Console.ForegroundColor = ConsoleColor.DarkRed;
                 Console.WriteLine(msg);
-                //return;
-                //Console.ForegroundColor = default(ConsoleColor);
             }
 
             Console.ForegroundColor = ConsoleColor.White;
             Console.WriteLine("Initializing..");
             //log
+            InitLogConfig();
+            StartNSPServer();
+        }
+
+        private void InitLogConfig()
+        {
             var loggerRepository = LogManager.CreateRepository("NSmartServerRepository");
             XmlConfigurator.ConfigureAndWatch(loggerRepository, new FileInfo("log4net.config"));
             Logger = LogManager.GetLogger(loggerRepository.Name, "NSmartServer");
             if (!loggerRepository.Configured) throw new Exception("log config failed.");
 
-            Logger.Debug($"*** {Global.NSmartProxyServerName} ***");
+            Logger.Debug($"*** {NSPVersion.NSmartProxyServerName} ***");
             var builder = new ConfigurationBuilder()
               .SetBasePath(Directory.GetCurrentDirectory())
               .AddJsonFile(CONFIG_FILE_PATH);
 
             Configuration = builder.Build();
-            StartServer();
         }
 
-        private static void StartServer()
+        private static void StartNSPServer()
         {
-            //try
-            //{
-            //    Server.ReversePort = int.Parse(Configuration.GetSection("ReversePort").Value);
-            //    Server.ConfigPort = int.Parse(Configuration.GetSection("ConfigPort").Value);
-            //}
-            //catch (Exception ex)
-            //{
-            //    Logger.Debug("配置文件读取失败：" + ex.ToString());
-            //    return;
-            //}
-
             NSPServerConfig serverConfig = null;
             //初始化配置
             if (!File.Exists(CONFIG_FILE_PATH))
@@ -110,7 +105,7 @@ namespace NSmartProxy.ServerHost
                 try
                 {
                     watch.Start();
-                    srv//.SetWebPort(int.Parse(Configuration.GetSection("WebAPIPort").Value))
+                    srv
                        .SetConfiguration(serverConfig)
                        .SetAnonymousLogin(true)
                        .SetServerConfigPath(CONFIG_FILE_PATH)
@@ -150,6 +145,13 @@ namespace NSmartProxy.ServerHost
             {
                 // ignored
             }
+        }
+
+        public void Stop()
+        {
+            //
+            Console.WriteLine(NSPVersion.NSmartProxyClientName +" STOPPED.");
+            Environment.Exit(0);
         }
     }
 }

@@ -1,32 +1,37 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.IO;
+using System.Security.Cryptography.X509Certificates;
 using System.Text;
 using NSmartProxy.Data;
 using NSmartProxy.Data.Config;
+using NSmartProxy.Infrastructure;
+using NSmartProxy.Infrastructure.Interfaces;
 
 namespace NSmartProxy.Authorize
 {
     /// <summary>
     /// 存放服务端的状态，以供其他组件共享
     /// </summary>
-    public class NSPServerContext
+    public class NSPServerContext : IServerContext
     {
         public NSPClientCollection Clients;
-        public Dictionary<int, NSPApp> PortAppMap;//端口和app的映射关系
+        public Dictionary<int, NSPAppGroup> PortAppMap;//“地址:端口”和app的映射关系
         public NSPServerConfig ServerConfig;
         public HashSet<string> TokenCaches; //服务端会话池，登录后的会话都在这里，每天需要做定时清理
         public long TotalReceivedBytes; //TODO 统计进出数据 下行
         public long TotalSentBytes;//上行
         public long ConnectCount;//连接次数
         public long ClientConnectCount; //客户端连接次数
-
+        public Dictionary<string, X509Certificate> PortCertMap;//host->证书字典
         private bool supportAnonymousLogin = true;
 
         public NSPServerContext()
         {
             TokenCaches = new HashSet<string>();
             Clients = new NSPClientCollection();
-            PortAppMap = new Dictionary<int, NSPApp>();
+            PortAppMap = new Dictionary<int, NSPAppGroup>();
+            PortCertMap = new Dictionary<string, X509Certificate>();
             //ServerConfig = new NSPServerConfig();
         }
 
@@ -63,6 +68,7 @@ namespace NSmartProxy.Authorize
             }
         }
 
+        private object locker = new object();
         /// <summary>
         /// 上下文中删除特定客户端
         /// </summary>
@@ -73,22 +79,58 @@ namespace NSmartProxy.Authorize
             {
                 NSPClient client = Clients[clientId];
                 string msg = "";
-                foreach (var appKV in client.AppMap)
+                lock (locker)
                 {
-                    int port = appKV.Value.ConsumePort;
-                    //1.关闭，并移除AppMap中的App
-                    PortAppMap[port].Close();
-                    PortAppMap.Remove(port);
-                    msg += appKV.Value.ConsumePort + " ";
-                    //2.移除端口占用
-                    NetworkUtil.ReleasePort(port);
+                    foreach (var appKV in client.AppMap)
+                    {
+                        int port = appKV.Value.ConsumePort;
+                        //1.关闭，并移除AppMap中的App
+                        if (!PortAppMap.ContainsKey(port))
+                        {
+                            Server.Logger.Debug($"clientid:{clientId}不包含port:{port}");
+                        }
+                        else
+                        {
+                            //TODO 3 关闭时会造成连锁反应
+                            //TODO 3 并且当nspgroup里的元素全都被关闭时，才remove掉这个节点
+                            //PortAppMap[port]
+                            //PortAppMap[port].CloseByHost();
+                            var nspAppGroup = PortAppMap[port];
+                            foreach (var (host, app) in nspAppGroup)
+                            {
+                                if (app.ClientId == clientId)
+                                {
+                                    app.Close();
+                                }
+                            }
+
+                            if (nspAppGroup.IsAllClosed())
+                            {
+                                Server.Logger.Info($"端口{port}所有app退出，侦听终止");
+                                if (nspAppGroup.Listener != null)
+                                {
+                                    //如果port内所有的app全都移除，才关闭listener
+                                    nspAppGroup.Listener.Server.NoDelay = true;
+                                    nspAppGroup.Listener.Server.Close();
+                                    nspAppGroup.Listener.Stop();
+                                }
+
+                                PortAppMap.Remove(port);
+                            }
+                        }
+
+
+                        msg += appKV.Value.ConsumePort + " ";
+                        //2.移除端口占用
+                        NetworkUtil.ReleasePort(port);
+                    }
                 }
 
                 //3.移除client
                 try
                 {
-                    int closedClients = Clients.UnRegisterClient(client.ClientID);
-                    Server.Logger.Info(msg + $"已移除， {client.ClientID} 中的 {closedClients}个传输已终止。");
+                    Clients.UnRegisterClient(client.ClientID);
+                    Server.Logger.Info(msg + $"已移除， {client.ClientID} 中的 传输已终止。");
                 }
                 catch (Exception ex)
                 {
@@ -100,5 +142,36 @@ namespace NSmartProxy.Authorize
                 Server.Logger.Debug($"无此id: {clientId},可能已关闭过");
             }
         }
+
+        /// <summary>
+        /// 通过配置初始化证书到证书缓存中
+        /// </summary>
+        public void InitCertificates()
+        {
+            foreach (var (port, path) in ServerConfig.CABoundConfig)
+            {
+                if (File.Exists(path))
+                {
+                    //从文件里加载证书
+                    PortCertMap[port] = X509Certificate2.CreateFromCertFile(path);
+                }
+                else
+                {
+                    Server.Logger.Debug($"未加载位于{port}的证书。");
+                }
+            }
+
+        }
+
+        public void SaveConfigChanges()
+        {
+            if (string.IsNullOrEmpty(ServerConfigPath))
+            {
+                throw new Exception("配置路径ServerConfigPath为空。");
+            }
+
+            ServerConfig.SaveChanges(ServerConfigPath);
+        }
+
     }
 }

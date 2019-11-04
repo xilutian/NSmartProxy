@@ -87,10 +87,16 @@ namespace NSmartProxy
                             continue;
                         }
                         foreach (IPEndPoint endPoint in endPoints)
-                        {
-                            if (endPoint.Port != port) continue;
-                            isAvailable = false;
-                            break;
+                        {//判断规则 ：0000或者三冒号打头，ip占用，才算占用，否则pass
+                         //因为linux下 出现192.168.0.106:8787的记录，也会被误判为端口被占用
+                            if (endPoint.Address.ToString() == "0.0.0.0" || endPoint.Address.ToString() == ":::")
+                            {
+                                if (endPoint.Port == port)
+                                {
+                                    isAvailable = false;
+                                    break;
+                                }
+                            }
                         }
 
                     } while (!isAvailable && port < IPEndPoint.MaxPort);
@@ -127,7 +133,7 @@ namespace NSmartProxy
                     ipGlobalProperties.GetActiveTcpListeners();
                 for (int i = ports.Count - 1; i > -1; i--)
                 {
-                    if (ports[i] > 65535 || ports[i] < 1|| _usedPorts.Contains(ports[i]))
+                    if (ports[i] > 65535 || ports[i] < 1 || _usedPorts.Contains(ports[i]))
                     {
                         usedPortList.Add(ports[i]);
                         ports.Remove(ports[i]);
@@ -201,7 +207,7 @@ namespace NSmartProxy
         }
 
 
-        public static async Task<TcpClient> ConnectAndSend(string addess, int port, Protocol protocol, byte[] data, bool isClose = false)
+        public static async Task<TcpClient> ConnectAndSend(string addess, int port, ServerProtocol protocol, byte[] data, bool isClose = false)
         {
             TcpClient configClient = new TcpClient();
             bool isConnected = false;

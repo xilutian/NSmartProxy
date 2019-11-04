@@ -11,6 +11,7 @@ using System.Threading.Tasks;
 using NSmartProxy.Shared;
 using System.IO;
 using System.Reflection;
+using NSmartProxy.Client.Authorize;
 using NSmartProxy.ClientRouter.Dispatchers;
 using NSmartProxy.Data.Models;
 
@@ -45,13 +46,15 @@ namespace NSmartProxy.Client
     {
         private static string nspClientCachePath = null;
 
-        public static string NSMART_CLIENT_CACHE_FILE = "cli_cache_v2.cache";
-        CancellationTokenSource ONE_LIVE_TOKEN_SRC;
-        CancellationTokenSource CANCEL_TOKEN_SRC;
-        CancellationTokenSource TRANSFERING_TOKEN_SRC;
-        CancellationTokenSource HEARTBEAT_TOKEN_SRC;
-        TaskCompletionSource<object> _waiter;
-        NSPDispatcher ClientDispatcher;
+        public static string NSMART_CLIENT_CACHE_FILE = "cli_cache_v3.cache";
+
+        private CancellationTokenSource ONE_LIVE_TOKEN_SRC;
+        private CancellationTokenSource CANCEL_TOKEN_SRC;
+        private CancellationTokenSource TRANSFERING_TOKEN_SRC;
+        private CancellationTokenSource HEARTBEAT_TOKEN_SRC;
+        private TaskCompletionSource<object> _waiter;
+        private NSPDispatcher ClientDispatcher;
+        //private UserCacheManager userCacheManager;
 
         public ServerConnectionManager ConnectionManager;
         public bool IsStarted = false;
@@ -71,9 +74,12 @@ namespace NSmartProxy.Client
             {
                 if (nspClientCachePath == null)
                 {
+                    //代表nsmartproxy.clientrouter.dll所在的路径
                     string assemblyFilePath = Assembly.GetExecutingAssembly().Location;
                     string assemblyDirPath = Path.GetDirectoryName(assemblyFilePath);
                     NspClientCachePath = assemblyDirPath + "\\" + NSMART_CLIENT_CACHE_FILE;
+                    //NspClientCachePath = System.Environment.CurrentDirectory + "\\" + NSMART_CLIENT_CACHE_FILE;
+
                 }
 
                 return nspClientCachePath;
@@ -110,7 +116,7 @@ namespace NSmartProxy.Client
         /// AlwaysReconnect：始终重试，开启此选项，无论何时，一旦程序在连接不上时都会进行重试，否则只在连接成功后的异常中断时才重试。
         /// </summary>
         /// <returns></returns>
-        public async Task Start(bool AlwaysReconnect = false)
+        public async Task Start(bool AlwaysReconnect = false, Action<ClientModel> complete = null)
         {
             if (AlwaysReconnect) IsStarted = true;
             var oneLiveToken = ONE_LIVE_TOKEN_SRC.Token;
@@ -149,17 +155,18 @@ namespace NSmartProxy.Client
                 //0.5 处理登录/重登录/匿名登录逻辑
                 try
                 {
-                    //显式登录
-                    if (CurrentLoginInfo != null)
+                    var clientUserCacheItem = UserCacheManager.GetUserCacheFromEndpoint(GetEndPoint(), NspClientCachePath);
+                    //显式使用用户名密码登录
+                    if (CurrentLoginInfo != null && CurrentLoginInfo.UserName != string.Empty)
                     {
                         var loginResult = await Login();
                         arrangedToken = loginResult.Item1;
                         clientId = loginResult.Item2;
                     }
-                    else if (File.Exists(NspClientCachePath))
-                    { 
+                    else if (clientUserCacheItem != null)
+                    {
                         //登录缓存
-                        arrangedToken = File.ReadAllText(NspClientCachePath);
+                        arrangedToken = clientUserCacheItem.Token;
                         //这个token的合法性无法保证,如果服务端删除了用户，而这里缓存还存在，会导致无法登录
                         //服务端校验token失效之后会主动关闭连接
                         CurrentLoginInfo = null;
@@ -174,7 +181,10 @@ namespace NSmartProxy.Client
                         arrangedToken = loginResult.Item1;
                         clientId = loginResult.Item2;
                         //保存缓存到磁盘
-                        File.WriteAllText(NspClientCachePath, arrangedToken);
+
+                        //File.WriteAllText(NspClientCachePath, arrangedToken);
+                        UserCacheManager.UpdateUser(arrangedToken, "",
+                            GetEndPoint(), NspClientCachePath);
                     }
                 }
                 catch (Exception ex)//出错 重连
@@ -198,6 +208,7 @@ namespace NSmartProxy.Client
                 {
                     //从服务端初始化客户端配置
                     clientModel = await ConnectionManager.InitConfig(this.ClientConfig).ConfigureAwait(false);
+                    complete?.Invoke(clientModel);
                 }
                 catch (Exception ex)
                 {
@@ -211,22 +222,23 @@ namespace NSmartProxy.Client
                 {
                     int counter = 0;
 
-                    //2.分配配置：appid为0时说明没有分配appid，所以需要分配一个
+                    //2.从服务端返回的appid上分配客户端的appid TODO 3 appid逻辑需要重新梳理
                     foreach (var app in appIdIpPortConfig)
                     {
-                        if (app.AppId == 0)
-                        {
-                            app.AppId = clientModel.AppList[counter].AppId;
-                            counter++;
-                        }
+                        //if (app.AppId == 0)
+                        //{
+                        app.AppId = clientModel.AppList[counter].AppId;
+                        counter++;
+                        //}
                     }
                     Logger.Debug("****************port list*************");
                     List<string> tunnelstrs = new List<string>();
                     foreach (var ap in clientModel.AppList)
                     {
                         var cApp = appIdIpPortConfig.First(obj => obj.AppId == ap.AppId);
-                        var tunnelStr = ap.AppId.ToString() + ":  " + ClientConfig.ProviderAddress + ":" +
-                                        ap.Port.ToString() + "=>" +
+                        //var cApp = appIdIpPortConfig[ap.AppId];
+                        var tunnelStr = ap.AppId + ":  " + ClientConfig.ProviderAddress + ":" +
+                                        ap.Port + "=>" +
                                         cApp.IP + ":" + cApp.TargetServicePort;
                         Logger.Debug(tunnelStr);
                         tunnelstrs.Add(tunnelStr);
@@ -292,9 +304,11 @@ namespace NSmartProxy.Client
                 Router.Logger.Debug("登录成功");
                 var data = result.Data;
                 arrangedToken = data.Token;
-                Router.Logger.Debug($"服务端版本号：{data.Version},当前适配版本号{Global.NSmartProxyServerName}");
+                Router.Logger.Debug($"服务端版本号：{data.Version},当前适配版本号{NSPVersion.NSmartProxyServerName}");
                 clientId = int.Parse(data.Userid);
-                File.WriteAllText(NspClientCachePath, arrangedToken);
+                //File.WriteAllText(NspClientCachePath, arrangedToken);
+                var endPoint = ClientConfig.ProviderAddress + ":" + ClientConfig.ProviderWebPort;
+                UserCacheManager.UpdateUser(arrangedToken, CurrentLoginInfo.UserName, endPoint, NspClientCachePath);
             }
             else
             {
@@ -335,7 +349,7 @@ namespace NSmartProxy.Client
                 await NetworkUtil.ConnectAndSend(
                         config.ProviderAddress,
                     config.ConfigPort,
-                        Protocol.CloseClient,
+                        ServerProtocol.CloseClient,
                         StringUtil.IntTo2Bytes(this.ConnectionManager.ClientID),
                         true)
                     .ConfigureAwait(false);
@@ -358,14 +372,22 @@ namespace NSmartProxy.Client
                 //消费端长连接，需要在server端保活
                 try
                 {
-                    int readByteCount = await providerClientStream.ReadAsync(buffer, 0, buffer.Length);
-                    if (readByteCount == 0)
+                    ControlMethod controlMethod;
+                    //TODO 5 处理应用级的keepalive
+                    do
                     {
-                        //抛出错误以便上层重启客户端。
-                        _waiter.TrySetResult(new Exception($"连接{appId}被服务器主动切断，已断开连接"));
-                        return;
+                        int readByteCount = await providerClientStream.ReadAsync(buffer, 0, buffer.Length); //双端标记S0001
+                        if (readByteCount == 0)
+                        {
+                            //抛出错误以便上层重启客户端。
+                            _waiter.TrySetResult(new Exception($"连接{appId}被服务器主动切断，已断开连接"));
+                            return;
 
-                    }
+                        }
+
+                        //TODO 4 如果是UDP则直接转发，之后返回上层
+                        controlMethod = (ControlMethod)buffer[0];
+                    } while (controlMethod == ControlMethod.KeepAlive);
                 }
                 catch (Exception ex)
                 {
@@ -393,10 +415,12 @@ namespace NSmartProxy.Client
                 //每移除一个链接则发起一个新的链接
                 Router.Logger.Debug(appId + "接收到连接请求");
                 //根据clientid_appid发送到固定的端口
+                //TODO 4 这里有性能隐患，考虑后期改成哈希表
                 ClientApp item = ClientConfig.Clients.First((obj) => obj.AppId == appId);
 
+
                 //向服务端发起一次长连接，没有接收任何外来连接请求时，
-                //该方法会在write处会阻塞。
+                //该方法会在write处会阻塞???。
                 await ConnectionManager.ConnectAppToServer(appId);
                 Router.Logger.Debug("已建立反向连接:" + appId);
                 // item1:app编号，item2:ip地址，item3:目标服务端口
@@ -413,7 +437,7 @@ namespace NSmartProxy.Client
 
                 NetworkStream targetServerStream = toTargetServer.GetStream();
                 //targetServerStream.Write(buffer, 0, readByteCount);
-                _ = TcpTransferAsync(providerClientStream, targetServerStream, providerClient, toTargetServer, epString);
+                _ = TcpTransferAsync(providerClientStream, targetServerStream, providerClient, toTargetServer, epString, item);
                 //already close connection
             }
             catch (Exception ex)
@@ -428,14 +452,15 @@ namespace NSmartProxy.Client
         }
 
 
-        private async Task TcpTransferAsync(NetworkStream providerStream, NetworkStream targetServceStream, TcpClient providerClient, TcpClient toTargetServer, string epString)
+        private async Task TcpTransferAsync(NetworkStream providerStream, NetworkStream targetServceStream,
+            TcpClient providerClient, TcpClient toTargetServer, string epString, ClientApp item)
         {
             try
             {
                 Router.Logger.Debug("Looping start.");
                 //创建相互转发流
-                var taskT2PLooping = ToStaticTransfer(TRANSFERING_TOKEN_SRC.Token, targetServceStream, providerStream, epString);
-                var taskP2TLooping = StreamTransfer(TRANSFERING_TOKEN_SRC.Token, providerStream, targetServceStream, epString);
+                var taskT2PLooping = ToStaticTransfer(TRANSFERING_TOKEN_SRC.Token, targetServceStream, providerStream, epString, item);
+                var taskP2TLooping = StreamTransfer(TRANSFERING_TOKEN_SRC.Token, providerStream, targetServceStream, epString, item);
 
                 //close connnection,whether client or server stopped transferring.
                 var comletedTask = await Task.WhenAny(taskT2PLooping, taskP2TLooping);
@@ -452,11 +477,17 @@ namespace NSmartProxy.Client
         }
 
 
-        private async Task StreamTransfer(CancellationToken ct, NetworkStream fromStream, NetworkStream toStream, string epString)
+        private async Task StreamTransfer(CancellationToken ct, NetworkStream fromStream, NetworkStream toStream,
+            string epString, ClientApp item)
         {
             using (fromStream)
             {
-                await fromStream.CopyToAsync(toStream, 4096, ct);
+                if (item.IsCompress)
+                {
+                    //TODO 4 如果是压缩，则从服务端拿到的数据需要解压缩
+                }
+
+                await fromStream.CopyToAsync(toStream, 81920, ct);
             }
             Router.Logger.Debug($"{epString}对节点传输关闭。");
 
@@ -464,11 +495,16 @@ namespace NSmartProxy.Client
         }
 
 
-        private async Task ToStaticTransfer(CancellationToken ct, NetworkStream fromStream, NetworkStream toStream, string epString)
+        private async Task ToStaticTransfer(CancellationToken ct, NetworkStream fromStream, NetworkStream toStream,
+            string epString, ClientApp item)
         {
             using (fromStream)
             {
-                await fromStream.CopyToAsync(toStream, 4096, ct);
+                if (item.IsCompress)
+                {
+                    //TODO 4 如果是压缩，则把信息压缩发送给服务端
+                }
+                await fromStream.CopyToAsync(toStream, 81920, ct);
             }
             Router.Logger.Debug($"{epString}反向链接传输关闭。");
         }
@@ -478,6 +514,10 @@ namespace NSmartProxy.Client
             TcpClient tc = new TcpClient();
             tc.Connect("127.0.0.1", port);
             tc.Client.Send(new byte[] { 0x00 });
+        }
+        public string GetEndPoint()
+        {
+            return ClientConfig.ProviderAddress + ":" + ClientConfig.ProviderWebPort;
         }
 
     }

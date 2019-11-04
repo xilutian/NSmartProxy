@@ -38,9 +38,10 @@ sudo docker run --name mynspserver -dit -p 7842:7842 -p 7841:7841 -p 12309:12309
 sudo dotnet NSmartProxy.ServerHost.dll
 ```
 * Windows：
+点击 Win+R 打开运行窗口. 输入 “cmd” 按下 Ctrl+Shift+Enter打开管理员身份运行的命令行窗口。 cd到安装目录，运行如下指令：
 
 ```
-运行安装目录下的run.cmd
+dotnet NSmartProxy.ServerHost.dll
 ```
 
 第三步 登陆http://ip:12309 进入web端，出厂用户密码为admin/admin
@@ -50,3 +51,16 @@ sudo dotnet NSmartProxy.ServerHost.dll
 第四步 进入服务端对用户进行各种管理操作
 
 <img src="https://github.com/tmoonlight/100lines/raw/master/6.nspserverrunnning_2.gif" />
+
+* 注册为后台服务<br />
+您还可以将NSmartProxy客户端注册为一个后台服务，方法如下：
+以管理员身份打开命令行后，运行以下指令进行服务的注册和卸载：
+```
+rem 注册windows服务
+dotnet NSmartProxy.ServerHost.dll action:install
+```
+
+```
+rem 卸载windows服务
+dotnet NSmartProxy.ServerHost.dll action:uninstall
+```

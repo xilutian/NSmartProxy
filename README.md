@@ -2,8 +2,9 @@
 
 [![GitHub release](https://img.shields.io/github/release/tmoonlight/NSmartProxy.svg?logoColor=%21%5BGitHub%20release%5D%28https%3A%2F%2Fimg.shields.io%2Fgithub%2Frelease%2Ftmoonlight%2FNSmartProxy.svg%29)](https://github.com/tmoonlight/NSmartProxy/releases)
 [![GitHub](https://img.shields.io/github/license/tmoonlight/NSmartProxy.svg)](https://github.com/tmoonlight/NSmartProxy/blob/master/LICENSE)
-[![Build Status](https://dev.azure.com/tmoonlight/NSmartProxy/_apis/build/status/tmoonlight.NSmartProxy?branchName=master)](https://dev.azure.com/tmoonlight/NSmartProxy/_build/latest?definitionId=1&branchName=master)
-
+[![Build Status](https://dev.azure.com/tmoonlight/NSmartProxy/_apis/build/status/tmoonlight.NSmartProxy?branchName=master)](https://dev.azure.com/tmoonlight/NSmartProxy/_build/latest?definitionId=1&branchName=master)<br />
+![Docker Pulls](https://img.shields.io/docker/pulls/tmoonlight/nspclient?label=nspclient%20docker%20pulls)
+![Docker Pulls](https://img.shields.io/docker/pulls/tmoonlight/nspserver?label=nspserver%20docker%20pulls)<br />
 [中文版](https://github.com/tmoonlight/NSmartProxy/blob/master/README_CN.md) | English
 
 # NSmartProxy
@@ -22,7 +23,7 @@ NSmartProxy is a reverse proxy tool that creates a secure tunnel from a public e
 NSmartProxy contains two service programs:<br />
 * Server (NSPServer): Deployed on the external network to receive reverse connections from users and NSPClients and forward them to each other.
 * Client (NSPClient): Deployed on the internal network to forward requests and responses to access various services on the intranet.
-<img src="https://github.com/tmoonlight/100lines/blob/master/theo_en.png">
+<img src="https://github.com/tmoonlight/100lines/raw/master/theo_en.png">
 
 ## Preparation
 #### Linux/Windows/MacOS

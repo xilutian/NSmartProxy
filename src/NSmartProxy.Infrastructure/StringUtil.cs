@@ -6,6 +6,7 @@ using System.Linq;
 using System.Text;
 using NSmartProxy.Data;
 using NSmartProxy.Infrastructure;
+using Snappy.Sharp;
 
 namespace NSmartProxy
 {
@@ -155,5 +156,97 @@ namespace NSmartProxy
             return retVal;
         }
 
+
+        /// <summary>
+        /// 在一个byte数组中查找另外一个byte数组的位置
+        /// </summary>
+        /// <param name="haystack"></param>
+        /// <param name="needle"></param>
+        /// <returns></returns>
+        public static int SearchBytesFromBytes(byte[] haystack, byte[] needle)
+        {
+            for (int i = 0; i <= haystack.Length - needle.Length; i++)
+            {
+                if (Match(haystack, needle, i))
+                {
+                    return i;
+                }
+            }
+            return -1;
+        }
+
+        public static bool Match(byte[] haystack, byte[] needle, int start)
+        {
+            if (needle.Length + start > haystack.Length)
+            {
+                return false;
+            }
+            else
+            {
+                for (int i = 0; i < needle.Length; i++)
+                {
+                    if (needle[i] != haystack[i + start])
+                    {
+                        return false;
+                    }
+                }
+                return true;
+            }
+        }
+
+        /// <summary>
+        /// 判断字符串是否是无小数点纯数字
+        /// </summary>
+        /// <param name="str"></param>
+        /// <returns></returns>
+        public static bool IsNum(this string str)
+        {
+            for (int i = 0; i < str.Length; i++)
+            {
+                if (str[i] < '0' || str[i] > '9')
+                    return false;
+            }
+            return true;
+        }
+
+        /// <summary>
+        /// 使用snappy算法解压缩
+        /// </summary>
+        /// <param name="compressed"></param>
+        /// <param name="offset"></param>
+        /// <param name="length"></param>
+        /// <returns></returns>
+        public static byte[] DecompressInSnappy(byte[] compressed,int offset ,int length)
+        {
+            SnappyDecompressor sd = new SnappyDecompressor();
+            return sd.Decompress(compressed, offset, length);
+        }
+
+        /// <summary>
+        /// 使用snappy算法压缩
+        /// </summary>
+        /// <param name="uncompressed"></param>
+        /// <param name="offset"></param>
+        /// <param name="uncompressedLength"></param>
+        /// <returns></returns>
+        public static CompressedBytes CompressInSnappy(byte[] uncompressed, int offset, int uncompressedLength)
+        {
+            SnappyCompressor sc = new SnappyCompressor();
+
+            //var bytes = Encoding.ASCII.GetBytes("HelloWor134ertegsdfgsfdgsdfgsdfgsfdgsdfgsdfgsdfgsdfgdsfgsdfgdsfgdfgdsfgld");
+            byte[] outBytes = new byte[sc.MaxCompressedLength(uncompressed.Length)];
+
+            int actualLength = sc.Compress(uncompressed, 0, uncompressedLength, outBytes);
+            return new CompressedBytes() { ContentBytes = outBytes, Length = actualLength };
+        }
+
+        /// <summary>
+        /// 压缩专用对象
+        /// </summary>
+        public class CompressedBytes
+        {
+            public int Length;
+            public byte[] ContentBytes;
+        }
     }
 }

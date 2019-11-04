@@ -16,6 +16,7 @@ using log4net.Config;
 using NSmartProxy.Data.Models;
 using Exception = System.Exception;
 using NSmartProxy.Shared;
+using Protocol = NSmartProxy.Data.Protocol;
 
 namespace NSmartProxy
 {
@@ -63,7 +64,7 @@ namespace NSmartProxy
                 _currentLoginInfo.UserPwd = args[3];
             }
 
-            Logger.Info($"*** {Global.NSmartProxyClientName} ***");
+            Logger.Info($"*** {NSPVersion.NSmartProxyClientName} ***");
 
             var builder = new ConfigurationBuilder()
                .SetBasePath(Directory.GetCurrentDirectory())
@@ -90,7 +91,7 @@ namespace NSmartProxy
 
             Router clientRouter = new Router(new Log4netLogger());
             //read config from config file.
-            SetConfig(clientRouter);// clientRouter.SetConifiguration();
+            SetConfig(clientRouter);
             if (_currentLoginInfo != null)
             {
                 clientRouter.SetLoginInfo(_currentLoginInfo);
@@ -114,9 +115,7 @@ namespace NSmartProxy
 
             NSPClientConfig config = new NSPClientConfig();
             config.ProviderAddress = Configuration.GetSection("ProviderAddress").Value;
-           // config.ProviderPort = int.Parse(Configuration.GetSection("ProviderPort").Value);
-           // config.ProviderConfigPort = int.Parse(Configuration.GetSection("ProviderConfigPort").Value);
-           config.ProviderWebPort = int.Parse(Configuration.GetSection("ProviderWebPort").Value);
+            config.ProviderWebPort = int.Parse(Configuration.GetSection("ProviderWebPort").Value);
             var configClients = Configuration.GetSection("Clients").GetChildren();
             foreach (var cli in configClients)
             {
@@ -126,10 +125,12 @@ namespace NSmartProxy
                 {
                     IP = cli["IP"],
                     TargetServicePort = int.Parse(cli["TargetServicePort"]),
-                    ConsumerPort = confConsumerPort
+                    ConsumerPort = confConsumerPort,
+                    Host = cli["Host"],
+                    Protocol = Enum.Parse<Protocol>((cli["Protocol"] ?? "TCP").ToUpper()),
+                    Description = cli["Description"]
                 });
             }
-            // Configuration.GetSection("1").
             clientRouter.SetConfiguration(config);
         }
     }

@@ -11,8 +11,8 @@ namespace NSmartProxy.Database
     /// </summary>
     public class NSmartDbOperator : IDbOperator
     {
-        public const string SUPER_VARIABLE_INDEX_ID = "$index_id$";
 
+        public const string SUPER_VARIABLE_INDEX_ID = "$index_id$";
         private SequenceFile seqf;
         private HashFile hashf;
         private string hashfFile;
@@ -99,6 +99,16 @@ namespace NSmartProxy.Database
             hashf.Put(keyBytesbytes, valBytes);
         }
 
+        public void UpdateByName(string userName, string newUserName, string value)
+        {
+            throw new NotImplementedException();
+        }
+
+        public void UpdateByName(string userName, string value)
+        {
+            throw new NotImplementedException();
+        }
+
         public List<string> Select(int startIndex, int length)
         {
             List<string> strs = new List<string>(length);
@@ -148,6 +158,11 @@ namespace NSmartProxy.Database
         public bool Exist(string key)
         {
             return hashf.Exist(String2Bytes(key));
+        }
+
+        public int GetCount()
+        {
+            throw new NotImplementedException();
         }
 
         public bool Exist(long key)

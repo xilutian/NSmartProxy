@@ -5,9 +5,10 @@ using System.Text;
 
 namespace NSmartProxy.Data.DTOs
 {
-    public class FileDTO
+    public class FileUploadDTO
     {
-        public FileStream FileStream;
+        public FileInfo FileInfo;
         public string FileName;
+        //public string Host;
     }
 }
